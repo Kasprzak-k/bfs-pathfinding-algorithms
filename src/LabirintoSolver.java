@@ -3,18 +3,19 @@ import java.util.*;
 
 public class LabirintoSolver {
     private static final char PAREDE = '#';
+    private static final char CAMINHO = '.';
     private static final char INICIO = 'A';
     private static final char DESTINO = 'B';
 
-    private static class Posicao {
-        int x, y, distancia;
-        Posicao anterior;
+    private static final int[][] DIRECOES = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
 
-        Posicao(int x, int y, int distancia, Posicao anterior) {
-            this.x = x;
-            this.y = y;
-            this.distancia = distancia;
-            this.anterior = anterior;
+    // Guarda só a posição mesmo
+    private static class Posicao {
+        final short x, y;
+
+        Posicao(int x, int y) {
+            this.x = (short) x;
+            this.y = (short) y;
         }
 
         @Override
@@ -27,198 +28,281 @@ public class LabirintoSolver {
 
         @Override
         public int hashCode() {
-            return Objects.hash(x, y);
+            return x * 31 + y;
         }
     }
 
     public static void main(String[] args) {
         try {
-            char[][] labirinto = carregarLabirinto("caso4.txt");
-            List<Posicao> caminho = encontrarCaminhoMaisCurto(labirinto);
+            long startTime = System.currentTimeMillis();
+            Runtime runtime = Runtime.getRuntime();
 
-            if (caminho != null) {
-                exibirResultadoResumido(labirinto, caminho);
+            char[][] labirinto = carregarLabirintoEficiente("caso4.txt");
+            int distancia = encontrarDistanciaMinima(labirinto);
+
+            long endTime = System.currentTimeMillis();
+            long memoriaUsada = (runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024);
+
+            System.out.println("Tempo total: " + (endTime - startTime) + "ms");
+            System.out.println("Memória usada: " + memoriaUsada + "MB");
+
+            if (distancia != -1) {
+                System.out.println("\nDeu bom! Caminho encontrado!");
+                System.out.println("Distância mínima: " + distancia + " passos");
             } else {
-                System.out.println("Não foi possível encontrar um caminho de A até B!");
+                System.out.println("Deu ruim... Não achei caminho de A até B!");
             }
 
         } catch (IOException e) {
             System.err.println("Erro ao ler o arquivo: " + e.getMessage());
+        } catch (OutOfMemoryError e) {
+            System.err.println("Estourou a memória! Tentando outro approach...");
+            tentarAbordagemAlternativa();
         }
     }
 
-    private static char[][] carregarLabirinto(String nomeArquivo) throws IOException {
-        List<String> linhas = new ArrayList<>();
+    private static char[][] carregarLabirintoEficiente(String nomeArquivo) throws IOException {
+        System.out.println("Carregando labirinto...");
+
+        // Primeiro vejo qual o tamanho da coisa
+        int altura = 0;
+        int largura = 0;
 
         try (BufferedReader br = new BufferedReader(new FileReader(nomeArquivo))) {
             String linha;
             while ((linha = br.readLine()) != null) {
-                linhas.add(linha);
+                altura++;
+                largura = Math.max(largura, linha.length());
             }
         }
 
-        int altura = linhas.size();
-        int largura = linhas.get(0).length();
+        System.out.println("Tamanho do labirinto: " + altura + "x" + largura);
 
-        char[][] labirinto = new char[altura][largura];
-        for (int i = 0; i < altura; i++) {
-            labirinto[i] = linhas.get(i).toCharArray();
+        // Agora sim carrego tudo
+        char[][] labirinto = new char[altura][];
+
+        try (BufferedReader br = new BufferedReader(new FileReader(nomeArquivo))) {
+            String linha;
+            int i = 0;
+            while ((linha = br.readLine()) != null) {
+                labirinto[i] = linha.toCharArray();
+                i++;
+            }
         }
 
         return labirinto;
     }
 
-    private static List<Posicao> encontrarCaminhoMaisCurto(char[][] labirinto) {
-        // Encontrar posições de A e B
+    // BFS focado só na distância, sem guardar caminho completo
+    private static int encontrarDistanciaMinima(char[][] labirinto) {
+        System.out.println("Procurando caminho mais curto...");
+
+        // Acho onde tão o A e o B
         Posicao inicio = null;
         Posicao destino = null;
 
         for (int i = 0; i < labirinto.length; i++) {
-            for (int j = 0; j < labirinto[i].length; j++) {
-                if (labirinto[i][j] == INICIO) {
-                    inicio = new Posicao(i, j, 0, null);
-                } else if (labirinto[i][j] == DESTINO) {
-                    destino = new Posicao(i, j, 0, null);
+            char[] linha = labirinto[i];
+            for (int j = 0; j < linha.length; j++) {
+                if (linha[j] == INICIO) {
+                    inicio = new Posicao(i, j);
+                } else if (linha[j] == DESTINO) {
+                    destino = new Posicao(i, j);
                 }
             }
+            if (inicio != null && destino != null) break; // Já achou os dois, pode parar
         }
 
         if (inicio == null || destino == null) {
-            System.out.println("Posições A ou B não encontradas!");
-            return null;
+            System.out.println("Não encontrei o A ou o B!");
+            return -1;
         }
 
-        System.out.println("Posição inicial A: (" + inicio.x + ", " + inicio.y + ")");
-        System.out.println("Posição final B: (" + destino.x + ", " + destino.y + ")");
+        System.out.println("Ponto A: (" + inicio.x + ", " + inicio.y + ")");
+        System.out.println("Ponto B: (" + destino.x + ", " + destino.y + ")");
 
-        // BFS para encontrar o caminho mais curto
-        Queue<Posicao> fila = new LinkedList<>();
-        Set<Posicao> visitados = new HashSet<>();
-        int[][] direcoes = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
+        return bfsApenasDistancia(labirinto, inicio, destino);
+    }
+
+    private static int bfsApenasDistancia(char[][] labirinto, Posicao inicio, Posicao destino) {
+        Queue<Posicao> fila = new ArrayDeque<>();
+
+        // Matriz de distâncias (uso short pra economizar)
+        short[][] distancias = new short[labirinto.length][];
+        for (int i = 0; i < labirinto.length; i++) {
+            distancias[i] = new short[labirinto[i].length];
+            Arrays.fill(distancias[i], (short) -1);
+        }
 
         fila.offer(inicio);
-        visitados.add(inicio);
+        distancias[inicio.x][inicio.y] = 0;
+
+        int nosExplorados = 0;
+        int maxFilaSize = 0;
+
+        while (!fila.isEmpty()) {
+            Posicao atual = fila.poll();
+            nosExplorados++;
+            short distAtual = distancias[atual.x][atual.y];
+
+            // Chegou no destino?
+            if (atual.x == destino.x && atual.y == destino.y) {
+                System.out.println("Cheguei no B!");
+                System.out.println("Nós explorados: " + nosExplorados);
+                System.out.println("Maior tamanho da fila: " + maxFilaSize);
+                return distAtual;
+            }
+
+            // Vou ver os vizinhos
+            for (int[] dir : DIRECOES) {
+                int novoX = atual.x + dir[0];
+                int novoY = atual.y + dir[1];
+
+                if (ehValido(labirinto, novoX, novoY) && distancias[novoX][novoY] == -1) {
+                    char celula = labirinto[novoX][novoY];
+                    if (celula != PAREDE) {
+                        distancias[novoX][novoY] = (short) (distAtual + 1);
+                        fila.offer(new Posicao(novoX, novoY));
+                    }
+                }
+            }
+
+            maxFilaSize = Math.max(maxFilaSize, fila.size());
+
+            // Só pra saber que tá rodando...
+            if (nosExplorados % 1500000 == 0) {
+                System.gc(); // Peço pro Java dar uma limpada
+                System.out.println("Andamento: " + nosExplorados + " nós vistos, fila: " + fila.size());
+            }
+        }
+
+        System.out.println("Não achei caminho depois de ver " + nosExplorados + " nós");
+        return -1;
+    }
+
+    private static boolean ehValido(char[][] labirinto, int x, int y) {
+        return x >= 0 && x < labirinto.length && y >= 0 && y < labirinto[x].length;
+    }
+
+    // Plan B pra labirintos gigantes
+    private static void tentarAbordagemAlternativa() {
+        try {
+            System.out.println("Usando approach alternativo...");
+
+            Posicao[] posicoes = encontrarPosicoesAB("caso7.txt");
+            if (posicoes == null) return;
+
+            Posicao inicio = posicoes[0];
+            Posicao destino = posicoes[1];
+
+            System.out.println("Ponto A: (" + inicio.x + ", " + inicio.y + ")");
+            System.out.println("Ponto B: (" + destino.x + ", " + destino.y + ")");
+
+            int distancia = bfsComStreaming("caso5.txt", inicio, destino);
+
+            if (distancia != -1) {
+                System.out.println("\nDeu certo! Caminho encontrado!");
+                System.out.println("Distância mínima: " + distancia + " passos");
+            } else {
+                System.out.println("Não foi dessa vez...");
+            }
+
+        } catch (IOException e) {
+            System.err.println("Erro no approach alternativo: " + e.getMessage());
+        }
+    }
+
+    private static Posicao[] encontrarPosicoesAB(String nomeArquivo) throws IOException {
+        try (BufferedReader br = new BufferedReader(new FileReader(nomeArquivo))) {
+            String linha;
+            int linhaNum = 0;
+            Posicao inicio = null;
+            Posicao destino = null;
+
+            while ((linha = br.readLine()) != null && (inicio == null || destino == null)) {
+                for (int col = 0; col < linha.length(); col++) {
+                    char c = linha.charAt(col);
+                    if (c == INICIO) {
+                        inicio = new Posicao(linhaNum, col);
+                    } else if (c == DESTINO) {
+                        destino = new Posicao(linhaNum, col);
+                    }
+                }
+                linhaNum++;
+            }
+
+            if (inicio != null && destino != null) {
+                return new Posicao[]{inicio, destino};
+            }
+        }
+        return null;
+    }
+
+    // BFS que lê do arquivo na hora (pra casos extremos)
+    private static int bfsComStreaming(String nomeArquivo, Posicao inicio, Posicao destino) throws IOException {
+        // Descobrindo o tamanho primeiro
+        int altura = 0;
+        int largura = 0;
+
+        try (BufferedReader br = new BufferedReader(new FileReader(nomeArquivo))) {
+            String linha;
+            while ((linha = br.readLine()) != null) {
+                altura++;
+                largura = Math.max(largura, linha.length());
+            }
+        }
+
+        short[][] distancias = new short[altura][largura];
+        for (int i = 0; i < altura; i++) {
+            Arrays.fill(distancias[i], (short) -1);
+        }
+
+        Queue<Posicao> fila = new ArrayDeque<>();
+        fila.offer(inicio);
+        distancias[inicio.x][inicio.y] = 0;
 
         int nosExplorados = 0;
 
         while (!fila.isEmpty()) {
             Posicao atual = fila.poll();
             nosExplorados++;
+            short distAtual = distancias[atual.x][atual.y];
 
-            // Verificar se chegou ao destino
-            if (atual.x == destino.x && atual.y == destino.y) {
-                System.out.println("Posições exploradas: " + nosExplorados);
-
-                // Reconstruir o caminho
-                List<Posicao> caminho = new ArrayList<>();
-                while (atual != null) {
-                    caminho.add(0, atual);
-                    atual = atual.anterior;
-                }
-                return caminho;
+            if (atual.equals(destino)) {
+                System.out.println("Cheguei no destino!");
+                return distAtual;
             }
 
-            // Explorar vizinhos
-            for (int[] dir : direcoes) {
+            for (int[] dir : DIRECOES) {
                 int novoX = atual.x + dir[0];
                 int novoY = atual.y + dir[1];
 
-                if (novoX >= 0 && novoX < labirinto.length &&
-                        novoY >= 0 && novoY < labirinto[0].length) {
+                if (novoX >= 0 && novoX < altura && novoY >= 0 && novoY < largura &&
+                        distancias[novoX][novoY] == -1) {
 
-                    char celula = labirinto[novoX][novoY];
-                    if (celula != PAREDE) {
-                        Posicao vizinho = new Posicao(novoX, novoY, atual.distancia + 1, atual);
-
-                        if (!visitados.contains(vizinho)) {
-                            visitados.add(vizinho);
-                            fila.offer(vizinho);
-                        }
+                    // Tenho que ler do arquivo pra ver o que tem aqui
+                    char celula = lerCelula(nomeArquivo, novoX, novoY, largura);
+                    if (celula != PAREDE && celula != ' ') {
+                        distancias[novoX][novoY] = (short) (distAtual + 1);
+                        fila.offer(new Posicao(novoX, novoY));
                     }
                 }
             }
         }
 
-        return null;
+        return -1;
     }
 
-    private static void exibirResultadoResumido(char[][] labirinto, List<Posicao> caminho) {
-        System.out.println("\n" + "=".repeat(50));
-        System.out.println("CAMINHO ENCONTRADO!");
-        System.out.println("=".repeat(50));
-
-        // Informações principais
-        System.out.println("Resumo:");
-        System.out.println("  - Distância percorrida: " + (caminho.size() - 1) + " passos");
-        System.out.println("  - Posições no caminho: " + caminho.size());
-        System.out.println("  - Tamanho do labirinto: " + labirinto.length + "x" + labirinto[0].length);
-
-        // Primeiras e ultimas coordenadas
-        System.out.println("\nTrajetória (primeiros 10 passos):");
-        for (int i = 0; i < Math.min(10, caminho.size()); i++) {
-            Posicao pos = caminho.get(i);
-            System.out.println("  " + (i + 1) + ". (" + pos.x + ", " + pos.y + ")");
-        }
-
-        if (caminho.size() > 10) {
-            System.out.println("  ...");
-            System.out.println("  " + caminho.size() + ". (" + caminho.get(caminho.size()-1).x + ", " + caminho.get(caminho.size()-1).y + ")");
-        }
-
-        // Visualizaçao mais compacta do caminho
-        System.out.println("\nVisualização do caminho:");
-        exibirVisualizacaoCompacta(labirinto, caminho);
-
-        System.out.println("\nAs coordenadas completas estão disponíveis no código.");
-    }
-
-    private static void exibirVisualizacaoCompacta(char[][] labirinto, List<Posicao> caminho) {
-        // Encontrar limites do caminho para mostrar uma area relevante
-        int minX = Integer.MAX_VALUE, maxX = Integer.MIN_VALUE;
-        int minY = Integer.MAX_VALUE, maxY = Integer.MIN_VALUE;
-
-        for (Posicao pos : caminho) {
-            minX = Math.min(minX, pos.x);
-            maxX = Math.max(maxX, pos.x);
-            minY = Math.min(minY, pos.y);
-            maxY = Math.max(maxY, pos.y);
-        }
-
-        // Expandir um pouco os limites para dar mais contexto
-        int margem = 5;
-        minX = Math.max(0, minX - margem);
-        maxX = Math.min(labirinto.length - 1, maxX + margem);
-        minY = Math.max(0, minY - margem);
-        maxY = Math.min(labirinto[0].length - 1, maxY + margem);
-
-        // Cria conjunto de posiçoes do caminho para busca rapida
-        Set<String> posicoesCaminho = new HashSet<>();
-        for (Posicao pos : caminho) {
-            posicoesCaminho.add(pos.x + "," + pos.y);
-        }
-
-        System.out.println("Área visualizada: linhas " + minX + "-" + maxX + ", colunas " + minY + "-" + maxY);
-        System.out.println();
-
-        // Mostra apenas a area relevante
-        for (int i = minX; i <= maxX; i++) {
-            System.out.print("  ");
-            for (int j = minY; j <= maxY; j++) {
-                if (posicoesCaminho.contains(i + "," + j)) {
-                    if (labirinto[i][j] == INICIO) {
-                        System.out.print("A");
-                    } else if (labirinto[i][j] == DESTINO) {
-                        System.out.print("B");
-                    } else {
-                        System.out.print("X");
-                    }
-                } else {
-                    System.out.print(labirinto[i][j]);
-                }
+    private static char lerCelula(String nomeArquivo, int x, int y, int largura) throws IOException {
+        try (BufferedReader br = new BufferedReader(new FileReader(nomeArquivo))) {
+            String linha = null;
+            for (int i = 0; i <= x; i++) {
+                linha = br.readLine();
             }
-            System.out.println();
+            if (linha != null && y < linha.length()) {
+                return linha.charAt(y);
+            }
         }
-
-        System.out.println("\nLegenda: A → X → B  (caminho) | # (parede) | . (espaço livre)");
+        return ' '; // Se tá fora do mapa
     }
 }
